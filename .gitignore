@@ -6,3 +6,6 @@ __pycache__/
 .env.*
 *.pem
 *.key
+backend/data/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
