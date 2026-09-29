@@ -1,0 +1,85 @@
+# 接口设计与调试平台（Mock Studio）
+
+Go 后端 + React 前端的有状态本地接口模拟平台。第一版聚焦：**请求定义、场景保存、带状态的模拟调用**；
+规则矛盾在启用前阻断；场景之间运行状态彼此隔离。
+
+## 能力一览
+
+- **请求定义**：方法 + 路径（支持 `:param`）、默认状态码/响应头/响应体。
+- **规则分支**：每条规则可配置匹配条件（请求头 / Query / Body 点路径的 `eq/ne/exists`）、
+  优先级、**第 N 次调用**、**延迟**、**失败模拟（连接重置 / 超时挂起）**、响应模板与状态提取。
+- **带状态**：规则命中后可把本次请求的 `body/header/query/path` 字段提取到场景状态；
+  后续任意请求的响应头、响应体都能用 `{{state.键}}` 引用，真正实现“前一次请求的内容被后一次使用”。
+- **重复调用**：按端点计数，`第 N 次调用 = 1` 只在第一次触发，第二次走其他规则或默认响应。
+- **场景隔离与重置**：状态、计数、历史按场景独立维护；“重置当前场景”只恢复该场景的初始状态并清空计数/历史。
+- **保存后继续编辑**：场景定义落盘到 JSON 文件，重启服务后仍在；运行状态不写盘。
+- **矛盾检查（启用前）**：
+  - 错误（阻断启用）：方法+路径重复、状态码非法、失败类型非法、同优先级同条件规则结果不确定、ID 重复等。
+  - 警告：可能重叠但可由优先级决定、响应引用了从未初始化或提取的状态键等。
+- **真实发请求**：运行页通过浏览器 `fetch` 打到 `/mocks/{场景ID}/...`，延迟、重置、超时按定义真实发生，
+  页面展示真实状态码、响应体、耗时、服务端调用历史和当前状态。
+
+不是几份写死的返回值：响应在每次请求时按命中规则**实时渲染**，并可随请求内容与累积状态变化。
+
+## 模板语法
+
+响应头与响应体中可用：
+
+- `{{state.orderId}}` —— 场景状态；支持点路径写入与回退值 `{{state.x ?? 'none'}}`
+- `{{body.user.id}}`、`{{header.X-Token}}`、`{{query.page}}`、`{{path.id}}` —— 本次请求数据
+- `{{callNumber.n}}` —— 当前端点的第几次调用
+
+缺失的取值渲染为空串；提供了 `?? '默认值'` 时使用默认值。
+
+## 目录结构
+
+- `backend/`：Go 标准库 HTTP 服务（`models.go` 模型、`engine.go` 模板/匹配、
+  `dispatch.go` 模拟执行、`validate.go` 矛盾校验、`store.go` JSON 持久化、`seed.go` 演示场景）。
+- `frontend/`：React 19 + Vite + TypeScript（`src/App.tsx` 主框架、`components/Designer.tsx` 设计页、
+  `components/Runner.tsx` 运行页、`components/RuleEditor.tsx` 规则编辑）。
+
+## 运行
+
+后端（默认 `:8787`，数据在 `./data`）：
+
+```bash
+cd backend
+go run . -addr :8787 -data ./data
+```
+
+前端（开发服务器，已配置 `/api` 与 `/mocks` 代理到 8787）：
+
+```bash
+cd frontend
+npm install        # 若环境文件系统不支持 .bin 软链，见下方说明
+npx vite           # 或 node node_modules/vite/bin/vite.js
+```
+
+打开 http://localhost:5173 。首次启动后端会自动生成“订单创建/查询（演示）”场景：
+第一次 `POST /orders` 返回 503 并延迟 200ms，同时把 `id` 写入 `orderId`；第二次起返回 201；
+`GET /orders/:id` 的响应里会带上上一次创建的 `lastCreated`。
+
+> 受限文件系统上 `npm install` 可能因无法创建 `node_modules/.bin` 软链而失败，
+> 可在可写目录执行 `npm install` 后直接用 `node node_modules/vite/bin/vite.js` 启动，无需 `.bin`。
+
+## 主要 HTTP API
+
+- `GET/POST /api/scenarios`、`GET/PUT/DELETE /api/scenarios/{id}`
+- `POST /api/scenarios/{id}/validate` —— 校验但不保存，返回 `{issues, valid}`
+- `POST /api/scenarios/{id}/enable` —— 有 error 级问题时返回 409 并附带问题列表
+- `POST /api/scenarios/{id}/reset` —— 仅重置该场景运行态
+- 任意方法 `/mocks/{id}/你定义的路径` —— 命中该场景下的端点并执行规则
+
+## 测试
+
+```bash
+cd backend && go test ./...
+```
+
+覆盖：跨请求状态链、条件+第 N 次调用的分支选择、场景隔离与重置互不影响、
+阻断性规则冲突导致启用失败、持久化文件不含运行态且重启可恢复、连接重置失败（可监听环境下）。
+
+## 后续版本预留
+
+- 兼容性检查：保存新版本时对比端点/规则的破坏性变更（状态码、路径参数、响应字段）。
+- 文档生成：由场景定义导出 OpenAPI / Markdown 接口文档。
