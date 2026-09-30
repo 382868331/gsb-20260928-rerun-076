@@ -81,7 +81,7 @@ func renderTemplate(tpl string, c renderContext) (string, []string) {
 		var ok bool
 		switch source {
 		case "state":
-			val, ok = c.state[key]
+			val, ok = resolvePath(c.state, key)
 		case "body":
 			val, ok = resolvePath(c.body, key)
 		case "header":

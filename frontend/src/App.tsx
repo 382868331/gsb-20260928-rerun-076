@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { Scenario, ValidationIssue } from "./types";
+import type { InteractionSequence, Scenario, ValidationIssue } from "./types";
 import { newScenario } from "./factory";
 import { Designer } from "./components/Designer";
 import { Runner } from "./components/Runner";
 import { IssuesBar } from "./components/IssuesBar";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 type Tab = "design" | "run";
 
@@ -16,27 +17,47 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string>("");
+  const [loadError, setLoadError] = useState<string>("");
+  const [loading, setLoading] = useState(true);
 
   const refreshList = useCallback(async () => {
-    const scs = await api.list();
-    setList(scs);
-    return scs;
+    try {
+      const scs = await api.list();
+      setList(scs);
+      setLoadError("");
+      return scs;
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+      return [] as Scenario[];
+    }
   }, []);
 
   const openScenario = useCallback(
     async (id: string) => {
-      const sc = await api.get(id);
-      setCurrent(sc);
-      setIssues([]);
-      setDirty(false);
+      try {
+        const sc = await api.get(id);
+        setCurrent(sc);
+        setIssues([]);
+        setDirty(false);
+        setMessage("");
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : String(e));
+      }
     },
     []
   );
 
   useEffect(() => {
-    refreshList().then((scs) => {
-      if (scs[0]) openScenario(scs[0].id);
-    });
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const scs = await refreshList();
+      if (!cancelled && scs[0]) await openScenario(scs[0].id);
+      if (!cancelled) setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [refreshList, openScenario]);
 
   const save = useCallback(async () => {
@@ -90,10 +111,14 @@ export function App() {
   }, [current, save, openScenario, refreshList]);
 
   const createOne = useCallback(async () => {
-    const sc = await api.create(newScenario());
-    await refreshList();
-    await openScenario(sc.id);
-    setTab("design");
+    try {
+      const sc = await api.create(newScenario());
+      await refreshList();
+      await openScenario(sc.id);
+      setTab("design");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+    }
   }, [refreshList, openScenario]);
 
   const removeOne = useCallback(
@@ -111,26 +136,53 @@ export function App() {
 
   const reset = useCallback(async () => {
     if (!current) return;
-    const sc = await api.reset(current.id);
-    setCurrent(sc);
-    setMessage("当前场景已重置");
-    setTimeout(() => setMessage(""), 2000);
+    try {
+      const sc = await api.reset(current.id);
+      setCurrent(sc);
+      setMessage("当前场景已重置");
+      setTimeout(() => setMessage(""), 2000);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+    }
   }, [current]);
 
   const refreshRuntime = useCallback(async () => {
     if (!current?.id) return;
-    const sc = await api.get(current.id);
-    setCurrent((prev) =>
-      prev
-        ? {
-            ...prev,
-            state: sc.state,
-            counters: sc.counters,
-            history: sc.history,
-            enabled: sc.enabled,
-          }
-        : sc
-    );
+    const id = current.id;
+    try {
+      const sc = await api.get(id);
+      // Ignore responses from a scenario the user already switched away from,
+      // otherwise old state/history would leak into the newly opened scenario.
+      setCurrent((prev) =>
+        prev && prev.id === id
+          ? {
+              ...prev,
+              state: sc.state,
+              counters: sc.counters,
+              history: sc.history,
+              enabled: sc.enabled,
+            }
+          : prev
+      );
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+    }
+  }, [current?.id]);
+
+  const saveSequence = useCallback(async (seq: InteractionSequence) => {
+    if (!current?.id) return;
+    const id = current.id;
+    const sc = await api.saveSequence(id, seq);
+    setCurrent((prev) => (prev && prev.id === id ? sc : prev));
+    setMessage("交互序列已保存");
+    setTimeout(() => setMessage(""), 2000);
+  }, [current?.id]);
+
+  const deleteSequence = useCallback(async (seqId: string) => {
+    if (!current?.id) return;
+    const id = current.id;
+    const sc = await api.deleteSequence(id, seqId);
+    setCurrent((prev) => (prev && prev.id === id ? sc : prev));
   }, [current?.id]);
 
   const errors = useMemo(() => issues.filter((i) => i.level === "error"), [issues]);
@@ -160,7 +212,21 @@ export function App() {
       </aside>
 
       <main className="main">
-        {!current && <div className="empty">新建或选择一个场景开始设计接口。</div>}
+        {loading && <div className="empty">正在加载场景…</div>}
+        {!loading && loadError && !current && (
+          <div className="fatal-panel">
+            <h3>场景加载失败</h3>
+            <p className="muted">{loadError}</p>
+            <button className="btn primary" onClick={() => window.location.reload()}>
+              重新加载
+            </button>
+          </div>
+        )}
+        {!loading && !loadError && !current && (
+          <div className="empty">
+            <p>还没有场景。点击左侧「+ 新建场景」开始设计接口。</p>
+          </div>
+        )}
         {current && (
           <>
             <header className="topbar">
@@ -209,18 +275,31 @@ export function App() {
             )}
 
             <div className="content" data-ep={current.endpoints[0]?.id}>
-              {tab === "design" ? (
-                <Designer
-                  scenario={current}
-                  counters={current.counters}
-                  onChange={(sc) => {
-                    setCurrent(sc);
-                    setDirty(true);
-                  }}
-                />
-              ) : (
-                <Runner scenario={current} onReset={reset} onRefresh={refreshRuntime} />
-              )}
+              <ErrorBoundary key={`design-${current.id}`} label="设计页">
+                {tab === "design" ? (
+                  <Designer
+                    key={`designer-${current.id}`}
+                    scenario={current}
+                    counters={current.counters}
+                    onChange={(sc) => {
+                      setCurrent(sc);
+                      setDirty(true);
+                    }}
+                  />
+                ) : null}
+              </ErrorBoundary>
+              <ErrorBoundary key={`run-${current.id}`} label="运行页">
+                {tab === "run" ? (
+                  <Runner
+                    key={`runner-${current.id}`}
+                    scenario={current}
+                    onReset={reset}
+                    onRefresh={refreshRuntime}
+                    onSaveSequence={saveSequence}
+                    onDeleteSequence={deleteSequence}
+                  />
+                ) : null}
+              </ErrorBoundary>
             </div>
           </>
         )}

@@ -74,6 +74,24 @@ export interface Scenario {
   state?: Record<string, unknown>;
   counters?: Record<string, number>;
   history?: CallRecord[];
+  sequences?: InteractionSequence[];
+}
+
+export interface SequenceStep {
+  endpointId: string;
+  method: string;
+  path: string;
+  vars?: Record<string, string>;
+  query?: string;
+  headers?: string;
+  body?: string;
+}
+
+export interface InteractionSequence {
+  id: string;
+  name: string;
+  createdAt: string;
+  steps: SequenceStep[];
 }
 
 export interface ValidationIssue {

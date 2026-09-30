@@ -1,4 +1,5 @@
 import type {
+  InteractionSequence,
   Scenario,
   ValidationIssue,
   ValidateResponse,
@@ -44,4 +45,11 @@ export const api = {
     req<{ ok: boolean; issues: ValidationIssue[] }>(`/api/scenarios/${id}/enable`, {
       method: "POST",
     }),
+  saveSequence: (id: string, seq: Partial<InteractionSequence>) =>
+    req<Scenario>(`/api/scenarios/${id}/sequences`, {
+      method: "POST",
+      body: JSON.stringify(seq),
+    }),
+  deleteSequence: (id: string, seqId: string) =>
+    req<Scenario>(`/api/scenarios/${id}/sequences/${seqId}`, { method: "DELETE" }),
 };

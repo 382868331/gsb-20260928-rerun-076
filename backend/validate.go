@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var validPathSeg = regexp.MustCompile(`^[A-Za-z0-9_.-]+|:[A-Za-z_][A-Za-z0-9_]*$`)
+var validPathSeg = regexp.MustCompile(`^(?:[A-Za-z0-9_.-]+|:[A-Za-z_][A-Za-z0-9_]*)$`)
 
 func validateScenario(sc *Scenario) []ValidationIssue {
 	var issues []ValidationIssue

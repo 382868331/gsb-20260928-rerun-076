@@ -181,3 +181,29 @@ legend { color: var(--muted); padding: 0 6px; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 th { color: var(--muted); font-weight: 500; }
+
+/* followup: resilience + sequence replay */
+.fatal-panel {
+  margin: 24px auto;
+  max-width: 560px;
+  padding: 20px;
+  border: 1px solid var(--err, #d33);
+  border-radius: 10px;
+  background: var(--panel, #fff);
+}
+.fatal-panel h3 { margin-top: 0; }
+.btn.danger { color: #fff; background: var(--err, #d33); border-color: var(--err, #d33); }
+.btn-mini.danger { color: var(--err, #d33); }
+.btn-mini.primary { color: #0b5; }
+.sequences-panel { border-top: 1px solid #e3e3e8; margin-top: 12px; padding-top: 10px; }
+.seq-item { border: 1px solid #e3e3e8; border-radius: 8px; padding: 8px; margin: 8px 0; }
+.recording { border: 1px dashed #e08a00; border-radius: 8px; padding: 8px; margin-bottom: 10px; }
+.step-list { margin: 4px 0; padding-left: 18px; max-height: 140px; overflow: auto; }
+.replay-results { margin-top: 12px; }
+.replay-step { border-left: 3px solid #ccc; padding: 4px 8px; margin: 6px 0; font-size: 13px; }
+.replay-step.ok { border-left-color: #2a9d5a; }
+.replay-step.bad { border-left-color: var(--err, #d33); }
+.row-failed { background: #fff1f0; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inline.small, .muted.small { font-size: 12px; }
+.json-view.small { max-height: 160px; overflow: auto; font-size: 12px; }

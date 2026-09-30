@@ -39,8 +39,46 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/scenarios/{id}/reset", s.resetScenario)
 	mux.HandleFunc("POST /api/scenarios/{id}/validate", s.validateHandler)
 	mux.HandleFunc("POST /api/scenarios/{id}/enable", s.enableScenario)
+	mux.HandleFunc("POST /api/scenarios/{id}/sequences", s.saveSequenceHandler)
+	mux.HandleFunc("DELETE /api/scenarios/{id}/sequences/{seqId}", s.deleteSequenceHandler)
 	mux.Handle("/mocks/{id}/", http.StripPrefix("/mocks/", &mockHandler{s: s}))
 	return logging(mux)
+}
+
+func (s *Server) saveSequenceHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var seq Sequence
+	if err := json.NewDecoder(r.Body).Decode(&seq); err != nil {
+		writeErr(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(seq.Name) == "" {
+		writeErr(w, 400, "序列名称不能为空")
+		return
+	}
+	if len(seq.Steps) == 0 {
+		writeErr(w, 400, "序列至少包含一个请求步骤")
+		return
+	}
+	saved, ok, err := s.store.saveSequence(id, seq)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if !ok {
+		writeErr(w, 404, "scenario not found")
+		return
+	}
+	writeJSON(w, 200, saved)
+}
+
+func (s *Server) deleteSequenceHandler(w http.ResponseWriter, r *http.Request) {
+	saved, ok := s.store.deleteSequence(r.PathValue("id"), r.PathValue("seqId"))
+	if !ok {
+		writeErr(w, 404, "scenario not found")
+		return
+	}
+	writeJSON(w, 200, saved)
 }
 
 type mockHandler struct{ s *Server }

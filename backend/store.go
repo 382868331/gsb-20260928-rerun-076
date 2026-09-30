@@ -167,6 +167,59 @@ func (s *Store) resetScenario(id string) (*Scenario, bool) {
 	return sc, true
 }
 
+// saveSequence attaches a sequence to the scenario definition and persists it
+// without touching runtime state, counters or history.
+func (s *Store) saveSequence(id string, seq Sequence) (*Scenario, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sc, ok := s.scenarios[id]
+	if !ok {
+		return nil, false, nil
+	}
+	if seq.ID == "" {
+		seq.ID = newID("seq")
+	}
+	if seq.CreatedAt == "" {
+		seq.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	replaced := false
+	for i := range sc.Sequences {
+		if sc.Sequences[i].ID == seq.ID {
+			sc.Sequences[i] = seq
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		sc.Sequences = append(sc.Sequences, seq)
+	}
+	sc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := s.persist(sc); err != nil {
+		return nil, true, err
+	}
+	cp := snapshot(sc)
+	return &cp, true, nil
+}
+
+func (s *Store) deleteSequence(id, seqID string) (*Scenario, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sc, ok := s.scenarios[id]
+	if !ok {
+		return nil, false
+	}
+	next := sc.Sequences[:0]
+	for _, seq := range sc.Sequences {
+		if seq.ID != seqID {
+			next = append(next, seq)
+		}
+	}
+	sc.Sequences = next
+	_ = s.persist(sc)
+	cp := snapshot(sc)
+	return &cp, true
+}
+
 // snapshot deep-copies a scenario for API responses; caller must hold s.mu.
 func snapshot(sc *Scenario) Scenario {
 	cp := *sc
@@ -178,6 +231,9 @@ func snapshot(sc *Scenario) Scenario {
 	}
 	if len(sc.History) > 0 {
 		cp.History = append([]CallRecord(nil), sc.History...)
+	}
+	if len(sc.Sequences) > 0 {
+		cp.Sequences = append([]Sequence(nil), sc.Sequences...)
 	}
 	return cp
 }

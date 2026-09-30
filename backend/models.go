@@ -68,6 +68,28 @@ type Scenario struct {
 	State    map[string]interface{} `json:"state,omitempty"`
 	Counters map[string]int         `json:"counters,omitempty"` // endpointID -> number of calls
 	History  []CallRecord           `json:"history,omitempty"`
+	// saved interaction sequences are part of the definition and survive restarts
+	Sequences []Sequence `json:"sequences,omitempty"`
+}
+
+// SequenceStep is one recorded interaction in a saved sequence.
+// Headers/Body keep the raw text the user typed (including {{state.x}} tokens).
+type SequenceStep struct {
+	EndpointID string            `json:"endpointId"`
+	Method     string            `json:"method"`
+	Path       string            `json:"path"` // endpoint template, e.g. /orders/:id
+	Vars       map[string]string `json:"vars,omitempty"`
+	Query      string            `json:"query,omitempty"`
+	Headers    string            `json:"headers,omitempty"`
+	Body       string            `json:"body,omitempty"`
+}
+
+// Sequence is an ordered list of requests that can be replayed against the scenario.
+type Sequence struct {
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	CreatedAt string         `json:"createdAt"`
+	Steps     []SequenceStep `json:"steps"`
 }
 
 type CallRecord struct {
