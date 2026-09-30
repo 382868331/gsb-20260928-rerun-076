@@ -109,9 +109,15 @@ func (s *Server) createScenario(w http.ResponseWriter, r *http.Request) {
 }
 
 func normalizeEndpoints(eps []Endpoint) []Endpoint {
+	if eps == nil {
+		eps = []Endpoint{}
+	}
 	for i := range eps {
 		if eps[i].ID == "" {
 			eps[i].ID = newID("ep")
+		}
+		if eps[i].Rules == nil {
+			eps[i].Rules = []Rule{}
 		}
 		for j := range eps[i].Rules {
 			if eps[i].Rules[j].ID == "" {

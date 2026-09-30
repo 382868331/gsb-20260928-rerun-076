@@ -6,7 +6,9 @@ import { Designer } from "./components/Designer";
 import { Runner } from "./components/Runner";
 import { IssuesBar } from "./components/IssuesBar";
 
-type Tab = "design" | "run";
+import { ChainRunner } from "./components/ChainRunner";
+
+type Tab = "design" | "run" | "chain";
 
 export function App() {
   const [list, setList] = useState<Scenario[]>([]);
@@ -16,26 +18,38 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string>("");
+  const [loadError, setLoadError] = useState<string>("");
 
   const refreshList = useCallback(async () => {
-    const scs = await api.list();
-    setList(scs);
-    return scs;
+    try {
+      const scs = await api.list();
+      setList(scs);
+      setLoadError("");
+      return scs;
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+      return [] as Scenario[];
+    }
   }, []);
 
   const openScenario = useCallback(
     async (id: string) => {
-      const sc = await api.get(id);
-      setCurrent(sc);
-      setIssues([]);
-      setDirty(false);
+      try {
+        const sc = await api.get(id);
+        setCurrent(sc);
+        setIssues([]);
+        setDirty(false);
+      } catch (e) {
+        setMessage("打开场景失败：" + (e instanceof Error ? e.message : String(e)));
+        setTimeout(() => setMessage(""), 3000);
+      }
     },
     []
   );
 
   useEffect(() => {
     refreshList().then((scs) => {
-      if (scs[0]) openScenario(scs[0].id);
+      if (scs && scs[0]) openScenario(scs[0].id);
     });
   }, [refreshList, openScenario]);
 
@@ -90,16 +104,27 @@ export function App() {
   }, [current, save, openScenario, refreshList]);
 
   const createOne = useCallback(async () => {
-    const sc = await api.create(newScenario());
-    await refreshList();
-    await openScenario(sc.id);
-    setTab("design");
+    try {
+      const sc = await api.create(newScenario());
+      await refreshList();
+      await openScenario(sc.id);
+      setTab("design");
+    } catch (e) {
+      setMessage("新建场景失败：" + (e instanceof Error ? e.message : String(e)));
+      setTimeout(() => setMessage(""), 3000);
+    }
   }, [refreshList, openScenario]);
 
   const removeOne = useCallback(
     async (id: string) => {
       if (!confirm("确定删除该场景？其定义与运行数据都会被删除。")) return;
-      await api.remove(id);
+      try {
+        await api.remove(id);
+      } catch (e) {
+        setMessage("删除失败：" + (e instanceof Error ? e.message : String(e)));
+        setTimeout(() => setMessage(""), 3000);
+        return;
+      }
       const scs = await refreshList();
       if (current?.id === id) {
         if (scs[0]) await openScenario(scs[0].id);
@@ -155,12 +180,41 @@ export function App() {
               </button>
             </li>
           ))}
-          {list.length === 0 && <p className="muted small">还没有场景。</p>}
+          {loadError && (
+            <li className="scene-list-status">
+              <p className="issue issue-error">场景列表加载失败：{loadError}</p>
+              <button className="btn full" onClick={() => refreshList()}>
+                重试加载
+              </button>
+            </li>
+          )}
+          {!loadError && list.length === 0 && (
+            <li className="scene-list-status">
+              <p className="muted small">
+                还没有场景。点击上方“+ 新建场景”创建第一个场景，保存并启用后即可在“运行调试”与“链式调试”中调用。
+              </p>
+            </li>
+          )}
         </ul>
       </aside>
 
       <main className="main">
-        {!current && <div className="empty">新建或选择一个场景开始设计接口。</div>}
+        {!current && loadError && (
+          <div className="empty">
+            <p>场景列表加载失败：{loadError}</p>
+            <button className="btn" onClick={() => refreshList()}>
+              重试
+            </button>
+          </div>
+        )}
+        {!current && !loadError && (
+          <div className="empty">
+            <p>还没有打开的场景。</p>
+            <button className="btn primary" onClick={createOne}>
+              + 新建场景
+            </button>
+          </div>
+        )}
         {current && (
           <>
             <header className="topbar">
@@ -170,6 +224,9 @@ export function App() {
                 </button>
                 <button className={tab === "run" ? "tab active" : "tab"} onClick={() => setTab("run")}>
                   运行调试
+                </button>
+                <button className={tab === "chain" ? "tab active" : "tab"} onClick={() => setTab("chain")}>
+                  链式调试
                 </button>
               </div>
               <div className="top-actions">
@@ -209,7 +266,9 @@ export function App() {
             )}
 
             <div className="content" data-ep={current.endpoints[0]?.id}>
-              {tab === "design" ? (
+              {tab === "chain" ? (
+                <ChainRunner scenario={current} />
+              ) : tab === "design" ? (
                 <Designer
                   scenario={current}
                   counters={current.counters}

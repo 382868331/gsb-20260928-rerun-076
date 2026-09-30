@@ -25,16 +25,41 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// Normalize a scenario coming from the API so the UI never has to deal with
+// null collections (Go serializes nil slices as null).
+export function normalizeScenario(sc: Scenario): Scenario {
+  return {
+    ...sc,
+    endpoints: (sc.endpoints ?? []).map((ep) => ({
+      ...ep,
+      rules: ep.rules ?? [],
+    })),
+    initialState: sc.initialState ?? {},
+    history: sc.history ?? [],
+    counters: sc.counters ?? {},
+  };
+}
+
 export const api = {
-  list: () => req<Scenario[]>('/api/scenarios'),
-  get: (id: string) => req<Scenario>(`/api/scenarios/${id}`),
-  create: (sc: Partial<Scenario>) =>
-    req<Scenario>("/api/scenarios", { method: "POST", body: JSON.stringify(sc) }),
-  update: (id: string, sc: Partial<Scenario>) =>
-    req<Scenario>(`/api/scenarios/${id}`, { method: "PUT", body: JSON.stringify(sc) }),
+  list: async () => {
+    const data = await req<Scenario[] | null>("/api/scenarios");
+    return (Array.isArray(data) ? data : []).map(normalizeScenario);
+  },
+  get: async (id: string) => normalizeScenario(await req<Scenario>(`/api/scenarios/${id}`)),
+  create: async (sc: Partial<Scenario>) =>
+    normalizeScenario(
+      await req<Scenario>("/api/scenarios", { method: "POST", body: JSON.stringify(sc) })
+    ),
+  update: async (id: string, sc: Partial<Scenario>) =>
+    normalizeScenario(
+      await req<Scenario>(`/api/scenarios/${id}`, { method: "PUT", body: JSON.stringify(sc) })
+    ),
   remove: (id: string) =>
     req<{ ok: boolean }>(`/api/scenarios/${id}`, { method: "DELETE" }),
-  reset: (id: string) => req<Scenario>(`/api/scenarios/${id}/reset`, { method: "POST" }),
+  reset: async (id: string) =>
+    normalizeScenario(
+      await req<Scenario>(`/api/scenarios/${id}/reset`, { method: "POST" })
+    ),
   validate: (id: string, sc: Partial<Scenario>) =>
     req<ValidateResponse>(`/api/scenarios/${id}/validate`, {
       method: "POST",

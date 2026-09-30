@@ -36,6 +36,10 @@ func NewStore(dir string) (*Store, error) {
 		if err := json.Unmarshal(b, &sc); err != nil {
 			continue
 		}
+		sc.Endpoints = normalizeEndpoints(sc.Endpoints)
+		if sc.InitialState == nil {
+			sc.InitialState = map[string]interface{}{}
+		}
 		sc.resetRuntime()
 		s.scenarios[sc.ID] = &sc
 	}

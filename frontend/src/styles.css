@@ -181,3 +181,41 @@ legend { color: var(--muted); padding: 0 6px; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 th { color: var(--muted); font-weight: 500; }
+
+/* ---- 链式调试 ---- */
+.chain-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 10px; }
+.chain-head h3 { margin: 0 0 4px; }
+.chain-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.chain-body { display: flex; gap: 18px; align-items: flex-start; }
+.chain-steps { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.chain-side {
+  width: 320px; min-width: 320px; position: sticky; top: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+}
+.chain-step {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+}
+.chain-step.ok { border-left: 3px solid var(--ok); }
+.chain-step.fail { border-left: 3px solid var(--err); }
+.chain-step.skip { border-left: 3px solid var(--muted); opacity: 0.85; }
+.step-head { display: flex; gap: 10px; align-items: center; }
+.step-head select { flex: 0 1 320px; }
+.step-head .grow { flex: 1; }
+.step-fields { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.extracts { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.extract-row { display: flex; gap: 6px; align-items: center; }
+.extract-row input { flex: 1; min-width: 0; }
+.step-result { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.step-result .json-view { flex-basis: 100%; margin: 4px 0 0; max-height: 200px; }
+.chip {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+  background: var(--panel2); border: 1px solid var(--line);
+}
+.chip.ok { color: var(--ok); border-color: var(--ok); }
+.chip.fail { color: var(--err); border-color: var(--err); }
+.chip.skip { color: var(--muted); }
+.var-chips { display: inline-flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.invalid-list { margin: 6px 0; padding-left: 18px; font-size: 12.5px; color: var(--warn); }
+.btn.danger { color: var(--err); border-color: var(--err); }
+.scene-list-status { list-style: none; padding: 4px 6px; }
+.empty { display: flex; flex-direction: column; gap: 12px; align-items: center; }
