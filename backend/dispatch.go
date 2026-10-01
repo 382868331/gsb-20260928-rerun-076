@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -124,6 +123,8 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 	// Rendering and extraction must happen while we hold state, but the delay
 	// should happen without blocking other scenarios' requests. Snapshot the
 	// inputs, release the lock during the delay, then re-lock to apply.
+	// State is committed only when the call actually completes: a simulated
+	// failure or a client cancellation must not leak values into later calls.
 	stateBefore := cloneState(sc.State)
 	rctx := renderContext{
 		state: stateBefore, body: body, headers: headers, queries: queries,
@@ -162,7 +163,6 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 	}
 
 	record := CallRecord{
-		Seq:        len(sc.History) + 1,
 		Time:       time.Now().UTC().Format(time.RFC3339),
 		EndpointID: ep.ID,
 		Method:     r.Method,
@@ -177,22 +177,38 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 	if rule != nil {
 		record.RuleID = rule.ID
 	}
-
-	// Apply state/history before releasing so later calls observe it.
-	sc.State = newState
-	record.StateAfter = cloneState(newState)
-	sc.History = append(sc.History, record)
 	s.store.unlock()
 
 	if delayMS > 0 {
-		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(delayMS)*time.Millisecond)
-		defer cancel()
-		<-ctx.Done()
+		timer := time.NewTimer(time.Duration(delayMS) * time.Millisecond)
+		select {
+		case <-r.Context().Done():
+			timer.Stop()
+			s.store.lock()
+			record.Cancelled = true
+			record.Status = 0
+			record.Seq = len(sc.History) + 1
+			sc.History = append(sc.History, record)
+			s.store.unlock()
+			return
+		case <-timer.C:
+		}
 	}
 	if fail != nil {
+		s.store.lock()
+		record.Seq = len(sc.History) + 1
+		sc.History = append(sc.History, record)
+		s.store.unlock()
 		simulateFailure(w, fail, delayMS)
 		return
 	}
+	// The call completes normally: commit extracted state and history.
+	s.store.lock()
+	sc.State = newState
+	record.StateAfter = cloneState(newState)
+	record.Seq = len(sc.History) + 1
+	sc.History = append(sc.History, record)
+	s.store.unlock()
 	for k, v := range renderedHeaders {
 		w.Header().Set(k, v)
 	}

@@ -36,6 +36,7 @@ func NewStore(dir string) (*Store, error) {
 		if err := json.Unmarshal(b, &sc); err != nil {
 			continue
 		}
+		normalizeScenario(&sc)
 		sc.resetRuntime()
 		s.scenarios[sc.ID] = &sc
 	}
@@ -102,6 +103,7 @@ func (s *Store) save(sc *Scenario, persist bool) error {
 func (s *Store) upsert(in Scenario) (*Scenario, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	normalizeScenario(&in)
 	now := time.Now().UTC().Format(time.RFC3339)
 	existing, ok := s.scenarios[in.ID]
 	if ok {

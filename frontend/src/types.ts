@@ -55,6 +55,7 @@ export interface CallRecord {
   ruleId: string;
   status: number;
   failed?: Failure;
+  cancelled?: boolean;
   delayMs: number;
   reqHeaders?: Record<string, string>;
   reqQuery?: Record<string, string>;

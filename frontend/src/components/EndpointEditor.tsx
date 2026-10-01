@@ -70,11 +70,11 @@ export function EndpointEditor({
 
       <div className="rules-head">
         <h4>规则（优先级高 + 更具体的条件优先；第 N 次调用可精确指定）</h4>
-        <button className="btn" onClick={() => set("rules", [...endpoint.rules, newRule()])}>
+        <button className="btn" onClick={() => set("rules", [...(endpoint.rules ?? []), newRule()])}>
           + 添加规则
         </button>
       </div>
-      {endpoint.rules.map((rule, i) => (
+      {(endpoint.rules ?? []).map((rule, i) => (
         <RuleEditor
           key={rule.id}
           rule={rule}
@@ -84,10 +84,10 @@ export function EndpointEditor({
             next[i] = r;
             set("rules", next);
           }}
-          onRemove={() => set("rules", endpoint.rules.filter((_, idx) => idx !== i))}
+          onRemove={() => set("rules", (endpoint.rules ?? []).filter((_, idx) => idx !== i))}
         />
       ))}
-      {endpoint.rules.length === 0 && (
+      {(endpoint.rules ?? []).length === 0 && (
         <p className="muted">还没有规则，所有请求都会走默认响应。</p>
       )}
     </section>

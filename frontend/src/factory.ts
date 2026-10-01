@@ -46,3 +46,16 @@ export function newScenario(): Scenario {
     updatedAt: "",
   };
 }
+
+// The backend may serialize empty collections as null; the UI iterates
+// these fields, so normalize them at the API boundary.
+export function ensureCollections(sc: Scenario): Scenario {
+  return {
+    ...sc,
+    endpoints: (sc.endpoints ?? []).map((ep) => ({ ...ep, rules: ep.rules ?? [] })),
+    initialState: sc.initialState ?? {},
+    state: sc.state ?? {},
+    counters: sc.counters ?? {},
+    history: sc.history ?? [],
+  };
+}

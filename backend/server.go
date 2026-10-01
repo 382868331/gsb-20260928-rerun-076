@@ -96,7 +96,7 @@ func (s *Server) createScenario(w http.ResponseWriter, r *http.Request) {
 	}
 	sc.ID = newID("sc")
 	sc.Enabled = false
-	sc.Endpoints = normalizeEndpoints(sc.Endpoints)
+	normalizeScenario(&sc)
 	saved, err := s.store.upsert(sc)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -109,9 +109,15 @@ func (s *Server) createScenario(w http.ResponseWriter, r *http.Request) {
 }
 
 func normalizeEndpoints(eps []Endpoint) []Endpoint {
+	if eps == nil {
+		eps = []Endpoint{}
+	}
 	for i := range eps {
 		if eps[i].ID == "" {
 			eps[i].ID = newID("ep")
+		}
+		if eps[i].Rules == nil {
+			eps[i].Rules = []Rule{}
 		}
 		for j := range eps[i].Rules {
 			if eps[i].Rules[j].ID == "" {
@@ -120,6 +126,15 @@ func normalizeEndpoints(eps []Endpoint) []Endpoint {
 		}
 	}
 	return eps
+}
+
+// normalizeScenario guarantees the collections the frontend iterates are
+// never null in JSON responses.
+func normalizeScenario(sc *Scenario) {
+	sc.Endpoints = normalizeEndpoints(sc.Endpoints)
+	if sc.InitialState == nil {
+		sc.InitialState = map[string]interface{}{}
+	}
 }
 
 func (s *Server) getScenario(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +165,7 @@ func (s *Server) updateScenario(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.ID = id
-	in.Endpoints = normalizeEndpoints(in.Endpoints)
+	normalizeScenario(&in)
 	saved, err := s.store.upsert(in)
 	if err != nil {
 		writeErr(w, 500, err.Error())

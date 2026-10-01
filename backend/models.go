@@ -79,6 +79,7 @@ type CallRecord struct {
 	RuleID     string                 `json:"ruleId"` // "" means default response
 	Status     int                    `json:"status"` // 0 when transport failed
 	Failed     *Failure               `json:"failed,omitempty"`
+	Cancelled  bool                   `json:"cancelled,omitempty"` // client went away mid-delay; state not committed
 	DelayMS    int                    `json:"delayMs"`
 	ReqHeaders map[string]string      `json:"reqHeaders,omitempty"`
 	ReqQuery   map[string]string      `json:"reqQuery,omitempty"`

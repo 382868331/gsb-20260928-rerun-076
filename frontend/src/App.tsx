@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import type { Scenario, ValidationIssue } from "./types";
-import { newScenario } from "./factory";
+import { ensureCollections, newScenario } from "./factory";
 import { Designer } from "./components/Designer";
 import { Runner } from "./components/Runner";
 import { IssuesBar } from "./components/IssuesBar";
@@ -11,6 +11,8 @@ type Tab = "design" | "run";
 export function App() {
   const [list, setList] = useState<Scenario[]>([]);
   const [current, setCurrent] = useState<Scenario | null>(null);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [loadError, setLoadError] = useState("");
   const [tab, setTab] = useState<Tab>("design");
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -18,26 +20,43 @@ export function App() {
   const [message, setMessage] = useState<string>("");
 
   const refreshList = useCallback(async () => {
-    const scs = await api.list();
+    const scs = (await api.list()).map(ensureCollections);
     setList(scs);
     return scs;
   }, []);
 
   const openScenario = useCallback(
     async (id: string) => {
-      const sc = await api.get(id);
-      setCurrent(sc);
-      setIssues([]);
-      setDirty(false);
+      try {
+        const sc = ensureCollections(await api.get(id));
+        setCurrent(sc);
+        setIssues([]);
+        setDirty(false);
+      } catch (e) {
+        setMessage(`打开场景失败：${e instanceof Error ? e.message : String(e)}`);
+        setTimeout(() => setMessage(""), 3000);
+      }
     },
     []
   );
 
-  useEffect(() => {
-    refreshList().then((scs) => {
-      if (scs[0]) openScenario(scs[0].id);
-    });
+  const load = useCallback(async () => {
+    setLoadState("loading");
+    setLoadError("");
+    try {
+      const scs = await refreshList();
+      setLoadState("ready");
+      if (scs[0]) await openScenario(scs[0].id);
+      else setCurrent(null);
+    } catch (e) {
+      setLoadState("error");
+      setLoadError(e instanceof Error ? e.message : String(e));
+    }
   }, [refreshList, openScenario]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const save = useCallback(async () => {
     if (!current) return;
@@ -46,7 +65,7 @@ export function App() {
       const saved = current.id
         ? await api.update(current.id, current)
         : await api.create(current);
-      setCurrent(saved);
+      setCurrent(ensureCollections(saved));
       setDirty(false);
       await refreshList();
       const res = await api.validate(saved.id, saved);
@@ -90,10 +109,15 @@ export function App() {
   }, [current, save, openScenario, refreshList]);
 
   const createOne = useCallback(async () => {
-    const sc = await api.create(newScenario());
-    await refreshList();
-    await openScenario(sc.id);
-    setTab("design");
+    try {
+      const sc = await api.create(newScenario());
+      await refreshList();
+      await openScenario(sc.id);
+      setTab("design");
+    } catch (e) {
+      setMessage(`新建场景失败：${e instanceof Error ? e.message : String(e)}`);
+      setTimeout(() => setMessage(""), 3000);
+    }
   }, [refreshList, openScenario]);
 
   const removeOne = useCallback(
@@ -111,7 +135,7 @@ export function App() {
 
   const reset = useCallback(async () => {
     if (!current) return;
-    const sc = await api.reset(current.id);
+    const sc = ensureCollections(await api.reset(current.id));
     setCurrent(sc);
     setMessage("当前场景已重置");
     setTimeout(() => setMessage(""), 2000);
@@ -119,7 +143,7 @@ export function App() {
 
   const refreshRuntime = useCallback(async () => {
     if (!current?.id) return;
-    const sc = await api.get(current.id);
+    const sc = ensureCollections(await api.get(current.id));
     setCurrent((prev) =>
       prev
         ? {
@@ -148,20 +172,40 @@ export function App() {
               <button className="scene-item" onClick={() => openScenario(sc.id)}>
                 <span className="scene-name">{sc.name}</span>
                 <span className={`dot ${sc.enabled ? "on" : "off"}`} title={sc.enabled ? "已启用" : "未启用"} />
-                <span className="muted small">{sc.endpoints.length} 端点</span>
+                <span className="muted small">{(sc.endpoints ?? []).length} 端点</span>
               </button>
               <button className="btn-mini danger" onClick={() => removeOne(sc.id)}>
                 删
               </button>
             </li>
           ))}
-          {list.length === 0 && <p className="muted small">还没有场景。</p>}
+          {loadState === "ready" && list.length === 0 && (
+            <p className="muted small">还没有场景，点击上方按钮新建。</p>
+          )}
+          {loadState === "loading" && <p className="muted small">加载中…</p>}
+          {loadState === "error" && <p className="muted small">列表加载失败。</p>}
         </ul>
       </aside>
 
       <main className="main">
-        {!current && <div className="empty">新建或选择一个场景开始设计接口。</div>}
-        {current && (
+        {loadState === "loading" && <div className="empty">正在加载场景列表…</div>}
+        {loadState === "error" && (
+          <div className="empty">
+            <p>场景列表加载失败：{loadError}</p>
+            <button className="btn primary" onClick={load}>
+              重试
+            </button>
+          </div>
+        )}
+        {loadState === "ready" && !current && (
+          <div className="empty">
+            <p>还没有任何场景。</p>
+            <button className="btn primary" onClick={createOne}>
+              + 新建第一个场景
+            </button>
+          </div>
+        )}
+        {loadState === "ready" && current && (
           <>
             <header className="topbar">
               <div className="tabs">
@@ -219,7 +263,12 @@ export function App() {
                   }}
                 />
               ) : (
-                <Runner scenario={current} onReset={reset} onRefresh={refreshRuntime} />
+                <Runner
+                  key={`${current.id}@${current.updatedAt}`}
+                  scenario={current}
+                  onReset={reset}
+                  onRefresh={refreshRuntime}
+                />
               )}
             </div>
           </>

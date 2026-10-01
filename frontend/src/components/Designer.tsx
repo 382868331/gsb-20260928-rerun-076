@@ -12,7 +12,7 @@ export function Designer({
   counters?: Record<string, number>;
   onChange: (sc: Scenario) => void;
 }) {
-  const [openEp, setOpenEp] = useState<string | null>(scenario.endpoints[0]?.id ?? null);
+  const [openEp, setOpenEp] = useState<string | null>(scenario.endpoints?.[0]?.id ?? null);
   const set = <K extends keyof Scenario>(k: K, v: Scenario[K]) =>
     onChange({ ...scenario, [k]: v });
 
@@ -59,7 +59,7 @@ export function Designer({
           className="btn"
           onClick={() => {
             const ep = newEndpoint();
-            set("endpoints", [...scenario.endpoints, ep]);
+            set("endpoints", [...(scenario.endpoints ?? []), ep]);
             setOpenEp(ep.id);
           }}
         >
@@ -67,13 +67,13 @@ export function Designer({
         </button>
       </div>
 
-      {scenario.endpoints.map((ep) => (
+      {(scenario.endpoints ?? []).map((ep) => (
         <div key={ep.id} className="endpoint-wrap">
           <button className="endpoint-collapse" onClick={() => setOpenEp(openEp === ep.id ? null : ep.id)}>
             <strong>
               {ep.method} {ep.path}
             </strong>
-            <span className="muted">{ep.name} · {ep.rules.filter(r => r.enabled).length} 条启用规则</span>
+            <span className="muted">{ep.name} · {(ep.rules ?? []).filter(r => r.enabled).length} 条启用规则</span>
           </button>
           {openEp === ep.id && (
             <EndpointEditor

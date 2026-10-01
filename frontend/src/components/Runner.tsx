@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
-import type { Scenario } from "../types";
+import type { CallRecord, Scenario } from "../types";
+import { SequencePanel, type SeqStep } from "./SequencePanel";
+import { findStateRefs, substituteState } from "../sequence";
 
 interface Probe {
   ok: boolean;
@@ -37,6 +39,24 @@ function pretty(body: string): string {
   }
 }
 
+let stepCounter = 0;
+
+function stepFromRecord(c: CallRecord): SeqStep {
+  stepCounter += 1;
+  const query = Object.entries(c.reqQuery ?? {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join("&");
+  return {
+    id: `step-${Date.now().toString(36)}-${stepCounter}`,
+    label: `来自历史 #${c.seq}`,
+    method: c.method,
+    path: c.path,
+    query,
+    headersText: JSON.stringify(c.reqHeaders ?? {}, null, 2),
+    bodyText: c.reqBody !== undefined && c.reqBody !== null ? JSON.stringify(c.reqBody, null, 2) : "",
+  };
+}
+
 export function Runner({
   scenario,
   onReset,
@@ -55,6 +75,14 @@ export function Runner({
   const [bodyText, setBodyText] = useState("");
   const [probe, setProbe] = useState<Probe | null>(null);
   const [sending, setSending] = useState(false);
+  const [steps, setSteps] = useState<SeqStep[]>([]);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  const stateNow = scenario.state ?? {};
+  const refKeys = useMemo(() => {
+    const all = [query, headersText, bodyText, ...Object.values(vars)].join("\n");
+    return findStateRefs(all);
+  }, [query, headersText, bodyText, vars]);
 
   const url = useMemo(() => {
     if (!ep) return "";
@@ -70,18 +98,24 @@ export function Runner({
     const started = performance.now();
     let reqHeaders: Record<string, string> = {};
     try {
-      reqHeaders = JSON.parse(headersText || "{}");
+      reqHeaders = JSON.parse(substituteState(headersText || "{}", stateNow).text);
     } catch {
       alert("请求头不是合法 JSON");
       setSending(false);
       return;
     }
     const hasBody = !['GET', 'HEAD'].includes(ep.method);
+    const subVars = Object.fromEntries(
+      Object.entries(vars).map(([k, v]) => [k, substituteState(v, stateNow).text])
+    );
+    const subQuery = substituteState(query, stateNow).text;
+    const subBody = substituteState(bodyText, stateNow).text;
+    const sendUrl = `/mocks/${scenario.id}${buildPath(ep.path, subVars, subQuery)}`;
     try {
-      const res = await fetch(url, {
+      const res = await fetch(sendUrl, {
         method: ep.method,
         headers: reqHeaders,
-        body: hasBody && bodyText ? bodyText : undefined,
+        body: hasBody && subBody ? subBody : undefined,
       });
       const respHeaders: Record<string, string> = {};
       res.headers.forEach((v, k) => (respHeaders[k] = v));
@@ -111,6 +145,35 @@ export function Runner({
   };
 
   const history = [...(scenario.history ?? [])].reverse();
+  const toggleSelect = (seq: number) => {
+    const next = new Set(selected);
+    if (next.has(seq)) next.delete(seq);
+    else next.add(seq);
+    setSelected(next);
+  };
+  const addCurrentToSequence = () => {
+    if (!ep) return;
+    stepCounter += 1;
+    setSteps([
+      ...steps,
+      {
+        id: `step-${Date.now().toString(36)}-${stepCounter}`,
+        label: ep.name,
+        method: ep.method,
+        path: buildPath(ep.path, vars, ""),
+        query,
+        headersText,
+        bodyText,
+      },
+    ]);
+  };
+  const addSelectedToSequence = () => {
+    const picked = (scenario.history ?? [])
+      .filter((c) => selected.has(c.seq))
+      .map(stepFromRecord);
+    setSteps([...steps, ...picked]);
+    setSelected(new Set());
+  };
   const ruleName = (id: string) => {
     for (const e of scenario.endpoints) {
       const r = e.rules.find((x) => x.id === id);
@@ -134,6 +197,9 @@ export function Runner({
           <code className="url-preview">{url}</code>
           <button className="btn primary" onClick={send} disabled={sending || !scenario.enabled}>
             {sending ? "等待响应…" : "发送请求"}
+          </button>
+          <button className="btn" onClick={addCurrentToSequence} disabled={!scenario.enabled}>
+            加入序列
           </button>
         </div>
         {!scenario.enabled && (
@@ -174,6 +240,22 @@ export function Runner({
             <textarea rows={5} value={bodyText} onChange={(e) => setBodyText(e.target.value)} spellCheck={false} />
           </label>
         )}
+        {refKeys.length > 0 && (
+          <p className="muted small">
+            本次发送引用的状态：
+            {refKeys.map((k) => (
+              <span
+                key={k}
+                className={stateNow[k] !== undefined ? "var-chip" : "var-chip invalid"}
+              >
+                {k}
+                {stateNow[k] !== undefined ? "" : "（当前状态不存在，将置空）"}
+              </span>
+            ))}
+          </p>
+        )}
+
+        <SequencePanel scenario={scenario} steps={steps} setSteps={setSteps} onRefresh={onRefresh} />
 
         <div className="response">
           <h4>响应 {probe && <span className="muted">（{probe.sentAt}，耗时 {probe.ms}ms）</span>}</h4>
@@ -195,22 +277,34 @@ export function Runner({
 
         <div className="history">
           <h4>调用历史（服务端按场景记录）</h4>
+          {selected.size > 0 && (
+            <button className="btn" onClick={addSelectedToSequence}>
+              将选中的 {selected.size} 个请求加入序列重新执行
+            </button>
+          )}
           {history.length === 0 && <p className="muted">还没有调用。</p>}
           <table>
             <thead>
               <tr>
-                <th>#</th><th>时间</th><th>方法</th><th>路径</th><th>命中规则</th><th>状态</th><th>延迟</th>
+                <th></th><th>#</th><th>时间</th><th>方法</th><th>路径</th><th>命中规则</th><th>状态</th><th>延迟</th>
               </tr>
             </thead>
             <tbody>
               {history.map((c) => (
                 <tr key={c.seq}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.seq)}
+                      onChange={() => toggleSelect(c.seq)}
+                    />
+                  </td>
                   <td>{c.seq}</td>
                   <td>{new Date(c.time).toLocaleTimeString()}</td>
                   <td>{c.method}</td>
                   <td>{c.path}</td>
-                  <td>{c.failed ? `失败：${c.failed.kind}` : ruleName(c.ruleId)}</td>
-                  <td>{c.failed ? "—" : c.status}</td>
+                  <td>{c.failed ? `失败：${c.failed.kind}` : c.cancelled ? "已取消" : ruleName(c.ruleId)}</td>
+                  <td>{c.failed || c.cancelled ? "—" : c.status}</td>
                   <td>{c.delayMs}ms</td>
                 </tr>
               ))}
