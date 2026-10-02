@@ -18,6 +18,7 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string>("");
+  const [saveError, setSaveError] = useState<string>("");
 
   const refreshList = useCallback(async () => {
     const scs = (await api.list()).map(ensureCollections);
@@ -58,21 +59,30 @@ export function App() {
     load();
   }, [load]);
 
-  const save = useCallback(async () => {
-    if (!current) return;
+  // save returns the persisted scenario (with its server id) or null on
+  // failure. On failure the current edits are kept untouched and a
+  // persistent status explains what happened — no refresh needed.
+  const save = useCallback(async (): Promise<Scenario | null> => {
+    if (!current) return null;
     setSaving(true);
+    setSaveError("");
     try {
       const saved = current.id
         ? await api.update(current.id, current)
         : await api.create(current);
-      setCurrent(ensureCollections(saved));
+      const norm = ensureCollections(saved);
+      setCurrent(norm);
       setDirty(false);
       await refreshList();
-      const res = await api.validate(saved.id, saved);
-      setIssues(res.issues);
-      setMessage("已保存");
+      const res = await api.validate(norm.id, norm);
+      setIssues(res.issues ?? []);
+      setMessage("已保存，可继续编辑");
+      return norm;
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : String(e));
+      setSaveError(
+        "保存失败：" + (e instanceof Error ? e.message : String(e)) + "。本次输入已保留，可修正后重试。"
+      );
+      return null;
     } finally {
       setSaving(false);
       setTimeout(() => setMessage(""), 2500);
@@ -81,27 +91,28 @@ export function App() {
 
   const validateNow = useCallback(async () => {
     if (!current) return;
-    if (!current.id) await save();
-    if (!current?.id) return;
-    const res = await api.validate(current.id, current);
-    setIssues(res.issues);
+    const sc = current.id ? current : await save();
+    if (!sc?.id) return;
+    const res = await api.validate(sc.id, sc);
+    setIssues(res.issues ?? []);
   }, [current, save]);
 
   const enable = useCallback(async () => {
     if (!current) return;
     setSaving(true);
     try {
-      await save();
-      const id = current.id;
+      const sc = await save();
+      if (!sc) return;
+      const id = sc.id;
       const res = await api.enable(id);
-      setIssues(res.issues);
+      setIssues(res.issues ?? []);
       await openScenario(id);
       await refreshList();
       setMessage("场景已启用");
     } catch (e) {
       const err = e as Error & { data?: { issues?: ValidationIssue[] } };
       if (err.data?.issues) setIssues(err.data.issues);
-      setMessage("启用被阻止：请先解决错误");
+      setSaveError("启用被阻止：请先解决错误");
     } finally {
       setSaving(false);
       setTimeout(() => setMessage(""), 3000);
@@ -234,6 +245,8 @@ export function App() {
               </div>
             </header>
 
+            {saveError && <div className="banner-error">{saveError}</div>}
+
             {errors.length > 0 && tab === "design" && (
               <div className="banner-error">
                 存在 {errors.length} 个阻断性错误，启用前必须修复（见下方校验面板）。
@@ -260,6 +273,7 @@ export function App() {
                   onChange={(sc) => {
                     setCurrent(sc);
                     setDirty(true);
+                    setSaveError("");
                   }}
                 />
               ) : (

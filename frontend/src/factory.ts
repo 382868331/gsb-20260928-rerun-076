@@ -52,7 +52,15 @@ export function newScenario(): Scenario {
 export function ensureCollections(sc: Scenario): Scenario {
   return {
     ...sc,
-    endpoints: (sc.endpoints ?? []).map((ep) => ({ ...ep, rules: ep.rules ?? [] })),
+    endpoints: (sc.endpoints ?? []).map((ep) => ({
+      ...ep,
+      defaultHeaders: ep.defaultHeaders ?? {},
+      rules: (ep.rules ?? []).map((r) => ({
+        ...r,
+        headers: r.headers ?? {},
+        extract: r.extract ?? [],
+      })),
+    })),
     initialState: sc.initialState ?? {},
     state: sc.state ?? {},
     counters: sc.counters ?? {},

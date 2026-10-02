@@ -37,6 +37,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/scenarios/{id}", s.updateScenario)
 	mux.HandleFunc("DELETE /api/scenarios/{id}", s.deleteScenario)
 	mux.HandleFunc("POST /api/scenarios/{id}/reset", s.resetScenario)
+	mux.HandleFunc("PUT /api/scenarios/{id}/state", s.replaceState)
 	mux.HandleFunc("POST /api/scenarios/{id}/validate", s.validateHandler)
 	mux.HandleFunc("POST /api/scenarios/{id}/enable", s.enableScenario)
 	mux.Handle("/mocks/{id}/", http.StripPrefix("/mocks/", &mockHandler{s: s}))
@@ -240,4 +241,30 @@ func (s *Server) enableScenario(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]interface{}{"ok": true, "issues": issues})
+}
+
+// replaceState replaces the runtime state of a scenario with the given
+// object. The sequence runner uses this when re-running from a middle
+// step: the server-side state is aligned with the variable pool rebuilt
+// from the kept earlier steps, so mock responses render from the current
+// round's values instead of leftovers from earlier rounds.
+func (s *Server) replaceState(w http.ResponseWriter, r *http.Request) {
+	sc, ok := s.store.get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, 404, "scenario not found")
+		return
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, 400, "invalid JSON: "+err.Error())
+		return
+	}
+	if body == nil {
+		body = map[string]interface{}{}
+	}
+	s.store.lock()
+	sc.State = cloneState(body)
+	cp := snapshot(sc)
+	s.store.unlock()
+	writeJSON(w, 200, cp)
 }

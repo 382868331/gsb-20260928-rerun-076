@@ -35,6 +35,11 @@ export const api = {
   remove: (id: string) =>
     req<{ ok: boolean }>(`/api/scenarios/${id}`, { method: "DELETE" }),
   reset: (id: string) => req<Scenario>(`/api/scenarios/${id}/reset`, { method: "POST" }),
+  setState: (id: string, state: Record<string, unknown>) =>
+    req<Scenario>(`/api/scenarios/${id}/state`, {
+      method: "PUT",
+      body: JSON.stringify(state),
+    }),
   validate: (id: string, sc: Partial<Scenario>) =>
     req<ValidateResponse>(`/api/scenarios/${id}/validate`, {
       method: "POST",

@@ -214,3 +214,18 @@ th { color: var(--muted); font-weight: 500; }
 .var-chip.produced { color: var(--ok); }
 .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
 .empty .btn { margin-top: 12px; }
+.seq-step.seq-blocked, .seq-step.seq-branch-off { border-color: var(--warn); }
+.seq-badge-blocked, .seq-badge-branch-off { color: var(--warn); }
+.preflight {
+  border: 1px solid var(--accent, #4f7cff);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preflight h4 { margin: 0; }
+.preflight-list { display: flex; flex-direction: column; gap: 4px; }
+.preflight-item { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.issue-warning { color: var(--warn); }
