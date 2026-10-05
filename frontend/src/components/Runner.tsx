@@ -54,6 +54,7 @@ function stepFromRecord(c: CallRecord): SeqStep {
     query,
     headersText: JSON.stringify(c.reqHeaders ?? {}, null, 2),
     bodyText: c.reqBody !== undefined && c.reqBody !== null ? JSON.stringify(c.reqBody, null, 2) : "",
+    repeatCount: 1,
   };
 }
 
@@ -164,6 +165,7 @@ export function Runner({
         query,
         headersText,
         bodyText,
+        repeatCount: 1,
       },
     ]);
   };

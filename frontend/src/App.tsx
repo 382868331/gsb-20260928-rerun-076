@@ -1,12 +1,31 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import type { Scenario, ValidationIssue } from "./types";
-import { ensureCollections, newScenario } from "./factory";
+import { ensureCollections, localId, newScenario } from "./factory";
 import { Designer } from "./components/Designer";
 import { Runner } from "./components/Runner";
 import { IssuesBar } from "./components/IssuesBar";
 
 type Tab = "design" | "run";
+type SaveStatus = "idle" | "saving" | "saved" | "unknown" | "error";
+
+interface DraftState {
+  scenario: Scenario;
+  status: SaveStatus;
+  error?: string;
+  originalId?: string;
+  updatedAt: number;
+}
+
+const DRAFT_KEY = "mock-studio.drafts.v1";
+
+function readDrafts(): Record<string, DraftState> {
+  try { return JSON.parse(localStorage.getItem(DRAFT_KEY) ?? "{}"); } catch { return {}; }
+}
+
+function writeDrafts(drafts: Record<string, DraftState>) {
+  localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts));
+}
 
 export function App() {
   const [list, setList] = useState<Scenario[]>([]);
@@ -18,6 +37,21 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string>("");
+  const [drafts, setDrafts] = useState<Record<string, DraftState>>(() => readDrafts());
+  const [draftKey, setDraftKey] = useState<string | null>(null);
+  const recoveredRef = useRef(false);
+
+  const activeDraft = draftKey ? drafts[draftKey] : undefined;
+
+  const updateDraft = useCallback((key: string, next: DraftState | null) => {
+    setDrafts((prev) => {
+      const out = { ...prev };
+      if (next) out[key] = next;
+      else delete out[key];
+      writeDrafts(out);
+      return out;
+    });
+  }, []);
 
   const refreshList = useCallback(async () => {
     const scs = (await api.list()).map(ensureCollections);
@@ -32,6 +66,7 @@ export function App() {
         setCurrent(sc);
         setIssues([]);
         setDirty(false);
+        setDraftKey(sc.clientId ?? null);
       } catch (e) {
         setMessage(`打开场景失败：${e instanceof Error ? e.message : String(e)}`);
         setTimeout(() => setMessage(""), 3000);
@@ -58,41 +93,79 @@ export function App() {
     load();
   }, [load]);
 
-  const save = useCallback(async () => {
-    if (!current) return;
+  useEffect(() => {
+    if (loadState !== "ready" || recoveredRef.current) return;
+    recoveredRef.current = true;
+    const unknown = Object.entries(drafts).find(([, d]) => d.status === "saving" || d.status === "unknown");
+    if (!unknown) return;
+    const [key, draft] = unknown;
+    const confirmed = list.find((sc) => sc.clientId === draft.scenario.clientId);
+    if (confirmed) {
+      openScenario(confirmed.id).then(() => updateDraft(key, null));
+      setMessage("检测到上次保存结果未知，已在服务端确认保存成功");
+    } else {
+      setCurrent(ensureCollections(draft.scenario));
+      setDraftKey(key);
+      setDirty(true);
+      setTab("design");
+      setMessage("上次保存结果未知：已恢复输入，可重新核查后再保存");
+    }
+  }, [loadState, drafts, list, openScenario, updateDraft]);
+
+  const save = useCallback(async (): Promise<Scenario | null> => {
+    if (!current) return null;
+    const key = current.clientId || localId("draft");
+    const originalId = current.id || drafts[draftKey ?? ""]?.originalId;
+    const nextDraft = { scenario: current, status: "saving" as const, originalId: current.id || originalId, updatedAt: Date.now() };
+    setDraftKey(key);
+    updateDraft(key, nextDraft);
     setSaving(true);
     try {
+      const withClient = { ...current, clientId: current.clientId || key };
       const saved = current.id
-        ? await api.update(current.id, current)
-        : await api.create(current);
+        ? await api.update(current.id, withClient, current.contentHash)
+        : await api.create(withClient);
       setCurrent(ensureCollections(saved));
       setDirty(false);
+      updateDraft(key, null);
       await refreshList();
       const res = await api.validate(saved.id, saved);
       setIssues(res.issues);
       setMessage("已保存");
+      return saved;
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      const status = (e as { status?: number })?.status;
+      updateDraft(key, {
+        scenario: { ...current, clientId: current.clientId || key },
+        status: status ? "error" : "unknown",
+        error: msg,
+        originalId: current.id || nextDraft.originalId,
+        updatedAt: Date.now(),
+      });
+      setMessage(`保存结果未知或已失败，输入已保留：${msg}`);
+      return null;
     } finally {
       setSaving(false);
       setTimeout(() => setMessage(""), 2500);
     }
-  }, [current, refreshList]);
+  }, [current, refreshList, updateDraft, draftKey, drafts]);
 
   const validateNow = useCallback(async () => {
     if (!current) return;
-    if (!current.id) await save();
-    if (!current?.id) return;
-    const res = await api.validate(current.id, current);
+    const saved = !current.id ? await save() : current;
+    if (!saved?.id) return;
+    const res = await api.validate(saved.id, saved);
     setIssues(res.issues);
   }, [current, save]);
 
   const enable = useCallback(async () => {
     if (!current) return;
-    setSaving(true);
     try {
-      await save();
-      const id = current.id;
+      const saved = await save();
+      if (!saved) return;
+      const id = saved.id;
+      setSaving(true);
       const res = await api.enable(id);
       setIssues(res.issues);
       await openScenario(id);
@@ -109,16 +182,14 @@ export function App() {
   }, [current, save, openScenario, refreshList]);
 
   const createOne = useCallback(async () => {
-    try {
-      const sc = await api.create(newScenario());
-      await refreshList();
-      await openScenario(sc.id);
-      setTab("design");
-    } catch (e) {
-      setMessage(`新建场景失败：${e instanceof Error ? e.message : String(e)}`);
-      setTimeout(() => setMessage(""), 3000);
-    }
-  }, [refreshList, openScenario]);
+    const sc = ensureCollections(newScenario());
+    const key = sc.clientId ?? localId("draft");
+    setCurrent({ ...sc, clientId: key });
+    setDraftKey(key);
+    setIssues([]);
+    setDirty(true);
+    setTab("design");
+  }, []);
 
   const removeOne = useCallback(
     async (id: string) => {
@@ -151,7 +222,10 @@ export function App() {
             state: sc.state,
             counters: sc.counters,
             history: sc.history,
+            operations: sc.operations,
+            activeRoundId: sc.activeRoundId,
             enabled: sc.enabled,
+            contentHash: sc.contentHash,
           }
         : sc
     );
@@ -225,8 +299,8 @@ export function App() {
                 <button className="btn" onClick={validateNow} disabled={saving}>
                   校验规则
                 </button>
-                <button className="btn" onClick={save} disabled={saving}>
-                  保存
+                <button className="btn" onClick={save} disabled={saving} title={activeDraft?.status === "unknown" ? "结果尚未确认" : ""}>
+                  {saving ? "正在保存…" : activeDraft?.status === "unknown" ? "结果未知，重新核查" : "保存"}
                 </button>
                 <button className="btn primary" onClick={enable} disabled={saving}>
                   保存并启用
@@ -237,6 +311,17 @@ export function App() {
             {errors.length > 0 && tab === "design" && (
               <div className="banner-error">
                 存在 {errors.length} 个阻断性错误，启用前必须修复（见下方校验面板）。
+              </div>
+            )}
+
+            {activeDraft && activeDraft.status !== "saved" && tab === "design" && (
+              <div className={`banner-save banner-${activeDraft.status}`}>
+                {activeDraft.status === "saving" && "正在保存，请勿依赖刷新猜测结果。"}
+                {activeDraft.status === "unknown" && "保存结果尚未确认；输入和原场景选择已保留，可重新保存核查，不会自动重发。"}
+                {activeDraft.status === "error" && `已确认保存失败：${activeDraft.error ?? "未知错误"}；输入仍保留。`}
+                {activeDraft.status === "unknown" && (
+                  <button className="btn-mini" onClick={save}>重新核查并保存</button>
+                )}
               </div>
             )}
 

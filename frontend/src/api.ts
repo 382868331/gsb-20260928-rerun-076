@@ -30,8 +30,12 @@ export const api = {
   get: (id: string) => req<Scenario>(`/api/scenarios/${id}`),
   create: (sc: Partial<Scenario>) =>
     req<Scenario>("/api/scenarios", { method: "POST", body: JSON.stringify(sc) }),
-  update: (id: string, sc: Partial<Scenario>) =>
-    req<Scenario>(`/api/scenarios/${id}`, { method: "PUT", body: JSON.stringify(sc) }),
+  update: (id: string, sc: Partial<Scenario>, expectedHash?: string) =>
+    req<Scenario>(`/api/scenarios/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(sc),
+      headers: expectedHash ? { "X-Content-Hash": expectedHash } : undefined,
+    }),
   remove: (id: string) =>
     req<{ ok: boolean }>(`/api/scenarios/${id}`, { method: "DELETE" }),
   reset: (id: string) => req<Scenario>(`/api/scenarios/${id}/reset`, { method: "POST" }),
@@ -44,4 +48,6 @@ export const api = {
     req<{ ok: boolean; issues: ValidationIssue[] }>(`/api/scenarios/${id}/enable`, {
       method: "POST",
     }),
+  beginRound: (id: string, roundId: string) =>
+    req<Scenario>(`/api/scenarios/${id}/rounds/${roundId}/begin`, { method: "POST" }),
 };

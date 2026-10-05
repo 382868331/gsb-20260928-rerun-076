@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"log"
@@ -29,6 +30,38 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+type definitionContent struct {
+	ClientID     string                 `json:"clientId,omitempty"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	Enabled      bool                   `json:"enabled"`
+	Endpoints    []Endpoint             `json:"endpoints"`
+	InitialState map[string]interface{} `json:"initialState"`
+}
+
+func contentHash(sc *Scenario) string {
+	c := definitionContent{
+		ClientID: sc.ClientID, Name: sc.Name, Description: sc.Description,
+		Enabled: sc.Enabled, Endpoints: sc.Endpoints, InitialState: sc.InitialState,
+	}
+	b, _ := json.Marshal(c)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:12])
+}
+
+func decorate(sc *Scenario) Scenario {
+	cp := snapshot(sc)
+	cp.ContentHash = contentHash(&cp)
+	return cp
+}
+
+func decorateAll(scenarios []Scenario) []Scenario {
+	for i := range scenarios {
+		scenarios[i] = decorate(&scenarios[i])
+	}
+	return scenarios
+}
+
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/scenarios", s.listScenarios)
@@ -39,6 +72,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/scenarios/{id}/reset", s.resetScenario)
 	mux.HandleFunc("POST /api/scenarios/{id}/validate", s.validateHandler)
 	mux.HandleFunc("POST /api/scenarios/{id}/enable", s.enableScenario)
+	mux.HandleFunc("POST /api/scenarios/{id}/rounds/{roundId}/begin", s.beginRound)
 	mux.Handle("/mocks/{id}/", http.StripPrefix("/mocks/", &mockHandler{s: s}))
 	return logging(mux)
 }
@@ -79,6 +113,8 @@ func (s *Server) listScenarios(w http.ResponseWriter, r *http.Request) {
 		// lists stay light: omit history
 		cp.History = nil
 		cp.State = nil
+		cp.Operations = nil
+		cp.ContentHash = contentHash(&cp)
 		out = append(out, cp)
 	}
 	writeJSON(w, 200, out)
@@ -94,6 +130,17 @@ func (s *Server) createScenario(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "场景名称不能为空")
 		return
 	}
+	if sc.ClientID != "" {
+		s.store.lock()
+		for _, old := range s.store.scenarios {
+			if old.ClientID == sc.ClientID {
+				s.store.unlock()
+				writeJSON(w, 200, decorate(old))
+				return
+			}
+		}
+		s.store.unlock()
+	}
 	sc.ID = newID("sc")
 	sc.Enabled = false
 	normalizeScenario(&sc)
@@ -102,10 +149,7 @@ func (s *Server) createScenario(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	s.store.lock()
-	cp := snapshot(saved)
-	s.store.unlock()
-	writeJSON(w, 201, cp)
+	writeJSON(w, 201, decorate(saved))
 }
 
 func normalizeEndpoints(eps []Endpoint) []Endpoint {
@@ -123,6 +167,27 @@ func normalizeEndpoints(eps []Endpoint) []Endpoint {
 			if eps[i].Rules[j].ID == "" {
 				eps[i].Rules[j].ID = newID("rule")
 			}
+			r := &eps[i].Rules[j]
+			if r.Extract == nil {
+				r.Extract = []Extract{}
+			}
+			if r.Headers == nil {
+				r.Headers = map[string]string{}
+			}
+			if r.Condition != nil {
+				if r.Condition.Headers == nil {
+					r.Condition.Headers = map[string]string{}
+				}
+				if r.Condition.Queries == nil {
+					r.Condition.Queries = map[string]string{}
+				}
+				if r.Condition.Body == nil {
+					r.Condition.Body = []BodyMatcher{}
+				}
+			}
+		}
+		if eps[i].DefaultHeaders == nil {
+			eps[i].DefaultHeaders = map[string]string{}
 		}
 	}
 	return eps
@@ -143,10 +208,7 @@ func (s *Server) getScenario(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "scenario not found")
 		return
 	}
-	s.store.lock()
-	cp := snapshot(sc)
-	s.store.unlock()
-	writeJSON(w, 200, cp)
+	writeJSON(w, 200, decorate(sc))
 }
 
 func (s *Server) updateScenario(w http.ResponseWriter, r *http.Request) {
@@ -166,15 +228,32 @@ func (s *Server) updateScenario(w http.ResponseWriter, r *http.Request) {
 	}
 	in.ID = id
 	normalizeScenario(&in)
+	existing, ok := s.store.get(id)
+	if !ok {
+		writeErr(w, 404, "scenario not found")
+		return
+	}
+	if in.ClientID != "" && existing.ClientID != "" && in.ClientID != existing.ClientID {
+		writeErr(w, 409, "这是另一个本地草稿对应的场景，已保留你的输入和原场景选择")
+		return
+	}
+	if in.ClientID == "" {
+		in.ClientID = existing.ClientID
+	}
+	expected := r.Header.Get("X-Content-Hash")
+	if expected != "" && contentHash(existing) != expected {
+		writeJSON(w, 409, map[string]string{
+			"error":             "场景定义在保存前已变化，已保留你的输入和原场景选择",
+			"serverContentHash": contentHash(existing),
+		})
+		return
+	}
 	saved, err := s.store.upsert(in)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	s.store.lock()
-	cp := snapshot(saved)
-	s.store.unlock()
-	writeJSON(w, 200, cp)
+	writeJSON(w, 200, decorate(saved))
 }
 
 func (s *Server) deleteScenario(w http.ResponseWriter, r *http.Request) {
@@ -191,10 +270,22 @@ func (s *Server) resetScenario(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "scenario not found")
 		return
 	}
-	s.store.lock()
-	cp := snapshot(sc)
-	s.store.unlock()
-	writeJSON(w, 200, cp)
+	writeJSON(w, 200, decorate(sc))
+}
+
+func (s *Server) beginRound(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	roundID := strings.TrimSpace(r.PathValue("roundId"))
+	if roundID == "" {
+		writeErr(w, 400, "roundId required")
+		return
+	}
+	sc, ok := s.store.beginRound(id, roundID)
+	if !ok {
+		writeErr(w, 404, "scenario not found")
+		return
+	}
+	writeJSON(w, 200, decorate(sc))
 }
 
 func (s *Server) validateHandler(w http.ResponseWriter, r *http.Request) {

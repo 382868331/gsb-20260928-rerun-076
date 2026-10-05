@@ -56,6 +56,7 @@ type Endpoint struct {
 
 type Scenario struct {
 	ID           string                 `json:"id"`
+	ClientID     string                 `json:"clientId,omitempty"`
 	Name         string                 `json:"name"`
 	Description  string                 `json:"description"`
 	Enabled      bool                   `json:"enabled"`
@@ -63,11 +64,43 @@ type Scenario struct {
 	InitialState map[string]interface{} `json:"initialState"`
 	CreatedAt    string                 `json:"createdAt"`
 	UpdatedAt    string                 `json:"updatedAt"`
+	ContentHash  string                 `json:"contentHash,omitempty"`
 
 	// runtime state, included in API responses but stripped when persisting
-	State    map[string]interface{} `json:"state,omitempty"`
-	Counters map[string]int         `json:"counters,omitempty"` // endpointID -> number of calls
-	History  []CallRecord           `json:"history,omitempty"`
+	State         map[string]interface{} `json:"state,omitempty"`
+	Counters      map[string]int         `json:"counters,omitempty"` // endpointID -> number of calls
+	History       []CallRecord           `json:"history,omitempty"`
+	ActiveRoundID string                 `json:"activeRoundId,omitempty"`
+	Operations    []OperationRecord      `json:"operations,omitempty"`
+}
+
+// OperationRecord is a durable fact about one logical request attempt. It is
+// written before the request leaves the planner, so a process/browser
+// interruption can be reopened as "unknown" instead of being silently retried.
+type OperationRecord struct {
+	RequestID         string                 `json:"requestId"`
+	RoundID           string                 `json:"roundId"`
+	StepID            string                 `json:"stepId,omitempty"`
+	BranchID          string                 `json:"branchId,omitempty"`
+	Condition         string                 `json:"condition,omitempty"`
+	RepeatIndex       int                    `json:"repeatIndex,omitempty"`
+	Attempt           int                    `json:"attempt,omitempty"`
+	Status            string                 `json:"status"` // pending | completed | failed
+	StartedAt         string                 `json:"startedAt"`
+	CompletedAt       string                 `json:"completedAt,omitempty"`
+	EndpointID        string                 `json:"endpointId"`
+	Method            string                 `json:"method"`
+	Path              string                 `json:"path"`
+	RuleID            string                 `json:"ruleId,omitempty"`
+	StatusHTTP        int                    `json:"statusHttp,omitempty"`
+	ReqHeaders        map[string]string      `json:"reqHeaders,omitempty"`
+	ReqQuery          map[string]string      `json:"reqQuery,omitempty"`
+	ReqBody           interface{}            `json:"reqBody,omitempty"`
+	StateBefore       map[string]interface{} `json:"stateBefore,omitempty"`
+	ProposedState     map[string]interface{} `json:"proposedState,omitempty"`
+	Committed         bool                   `json:"committed,omitempty"`
+	UncommittedReason string                 `json:"uncommittedReason,omitempty"`
+	ResponseBody      string                 `json:"responseBody,omitempty"`
 }
 
 type CallRecord struct {

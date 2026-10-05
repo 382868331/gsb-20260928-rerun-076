@@ -214,3 +214,21 @@ th { color: var(--muted); font-weight: 500; }
 .var-chip.produced { color: var(--ok); }
 .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
 .empty .btn { margin-top: 12px; }
+
+.banner-save {
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0;
+  background: var(--panel2); display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+.banner-saving { color: var(--muted); }
+.banner-unknown { border-color: var(--warn); color: var(--warn); }
+.banner-error { border-color: var(--err); color: var(--err); }
+.seq-edit-row { display: flex; gap: 14px; align-items: center; margin: 6px 0; }
+.repeat-result, .op-fact {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  border-top: 1px solid var(--line); padding: 6px 0; font-size: 12.5px;
+}
+.operation-ledger { margin: 8px 0; }
+.op-completed strong { color: var(--ok); }
+.op-failed strong, .op-pending strong { color: var(--warn); }
+.op-fact code { background: var(--panel2); padding: 1px 6px; border-radius: 4px; }
+.seq-badge-unknown { color: var(--warn); }

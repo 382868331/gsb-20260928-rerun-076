@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -93,8 +94,32 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 		return
 	}
 
-	sc.Counters[ep.ID]++
-	callNum := sc.Counters[ep.ID]
+	requestID := strings.TrimSpace(r.Header.Get("X-Mock-Request-Id"))
+	roundID := strings.TrimSpace(r.Header.Get("X-Mock-Round-Id"))
+	stepID := strings.TrimSpace(r.Header.Get("X-Mock-Step-Id"))
+	branchID := strings.TrimSpace(r.Header.Get("X-Mock-Branch-Id"))
+	conditionText := strings.TrimSpace(r.Header.Get("X-Mock-Condition"))
+	repeatIndex := atoiDefault(r.Header.Get("X-Mock-Repeat-Index"), 0)
+	attempt := atoiDefault(r.Header.Get("X-Mock-Attempt"), 1)
+	if requestID != "" {
+		if old, exists := s.store.findOperation(sc, requestID); exists {
+			s.store.unlock()
+			w.Header().Set("X-Mock-Request-Id", old.RequestID)
+			w.Header().Set("X-Mock-Round-Id", old.RoundID)
+			w.Header().Set("X-Mock-Replayed-Fact", "true")
+			w.Header().Set("X-Mock-Committed", strconv.FormatBool(old.Committed))
+			if old.Status == "failed" {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, `{"error":"operation already confirmed failed"}`)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, old.ResponseBody)
+			return
+		}
+	}
+	tracked := requestID != ""
+	callNum := sc.Counters[ep.ID] + 1
 	rule := selectRule(ep, body, headers, queries, callNum)
 
 	status := ep.DefaultStatus
@@ -177,37 +202,93 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 	if rule != nil {
 		record.RuleID = rule.ID
 	}
+	op := OperationRecord{
+		RequestID:     requestID,
+		RoundID:       roundID,
+		StepID:        stepID,
+		BranchID:      branchID,
+		Condition:     conditionText,
+		RepeatIndex:   repeatIndex,
+		Attempt:       attempt,
+		Status:        "pending",
+		StartedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+		EndpointID:    ep.ID,
+		Method:        r.Method,
+		Path:          r.URL.Path,
+		ReqHeaders:    headers,
+		ReqQuery:      queries,
+		ReqBody:       body,
+		StateBefore:   stateBefore,
+		ProposedState: newState,
+	}
+	if rule != nil {
+		op.RuleID = rule.ID
+	}
+	if tracked {
+		_ = s.store.putOperation(sc, op)
+	}
 	s.store.unlock()
 
 	if delayMS > 0 {
 		timer := time.NewTimer(time.Duration(delayMS) * time.Millisecond)
 		select {
-		case <-r.Context().Done():
-			timer.Stop()
-			s.store.lock()
-			record.Cancelled = true
-			record.Status = 0
-			record.Seq = len(sc.History) + 1
-			sc.History = append(sc.History, record)
-			s.store.unlock()
-			return
 		case <-timer.C:
+		case <-r.Context().Done():
+			if !tracked {
+				timer.Stop()
+				s.store.lock()
+				record.Cancelled = true
+				record.Status = 0
+				record.Seq = len(sc.History) + 1
+				sc.History = append(sc.History, record)
+				s.store.unlock()
+				return
+			}
+			// The human review/cancel action only stops the browser waiting.
+			// The request remains pending on the server and its late, confirmed
+			// result can be inspected after reopening; it is never resent.
+			<-timer.C
 		}
 	}
+	s.store.lock()
+	activeRound := !tracked || roundID == sc.ActiveRoundID
+	stateUnchanged := jsonEqual(stateBefore, sc.State)
+	committed := activeRound && stateUnchanged && fail == nil
+	if committed {
+		sc.State = cloneState(newState)
+		sc.Counters[ep.ID] = callNum
+		record.StateAfter = cloneState(newState)
+		op.Committed = true
+	} else if !activeRound {
+		op.UncommittedReason = "结果属于旧轮次，不改变当前轮变量"
+	} else {
+		op.UncommittedReason = "等待期间当前轮变量已由其他路径推进，结果仅保留为独立事实"
+	}
 	if fail != nil {
-		s.store.lock()
 		record.Seq = len(sc.History) + 1
-		sc.History = append(sc.History, record)
+		if activeRound {
+			sc.History = append(sc.History, record)
+		}
+		op.Status = "failed"
+		op.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		if tracked {
+			_ = s.store.putOperation(sc, op)
+		}
 		s.store.unlock()
 		simulateFailure(w, fail, delayMS)
 		return
 	}
-	// The call completes normally: commit extracted state and history.
-	s.store.lock()
-	sc.State = newState
-	record.StateAfter = cloneState(newState)
 	record.Seq = len(sc.History) + 1
-	sc.History = append(sc.History, record)
+	if activeRound {
+		sc.History = append(sc.History, record)
+	}
+	op.Status = "completed"
+	op.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	op.StatusHTTP = status
+	op.ResponseBody = rendered
+	if tracked {
+		_ = s.store.putOperation(sc, op)
+	}
 	s.store.unlock()
 	for k, v := range renderedHeaders {
 		w.Header().Set(k, v)
@@ -215,8 +296,34 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 	if ct := w.Header().Get("Content-Type"); ct == "" {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	}
+	if tracked {
+		w.Header().Set("X-Mock-Request-Id", requestID)
+		w.Header().Set("X-Mock-Round-Id", roundID)
+		w.Header().Set("X-Mock-Committed", strconv.FormatBool(committed))
+	}
 	w.WriteHeader(status)
 	_, _ = io.WriteString(w, rendered)
+}
+
+func atoiDefault(s string, def int) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return def
+	}
+	n := 0
+	for _, ch := range s {
+		if ch < '0' || ch > '9' {
+			return def
+		}
+		n = n*10 + int(ch-'0')
+	}
+	return n
+}
+
+func jsonEqual(a, b map[string]interface{}) bool {
+	ab, _ := json.Marshal(a)
+	bb, _ := json.Marshal(b)
+	return string(ab) == string(bb)
 }
 
 func cloneStringMap(m map[string]string) map[string]string {

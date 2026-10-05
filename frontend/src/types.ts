@@ -65,6 +65,7 @@ export interface CallRecord {
 
 export interface Scenario {
   id: string;
+  clientId?: string;
   name: string;
   description: string;
   enabled: boolean;
@@ -72,9 +73,38 @@ export interface Scenario {
   initialState: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  contentHash?: string;
   state?: Record<string, unknown>;
   counters?: Record<string, number>;
   history?: CallRecord[];
+  activeRoundId?: string;
+  operations?: OperationRecord[];
+}
+
+export interface OperationRecord {
+  requestId: string;
+  roundId: string;
+  stepId?: string;
+  branchId?: string;
+  condition?: string;
+  repeatIndex?: number;
+  attempt?: number;
+  status: "pending" | "completed" | "failed";
+  startedAt: string;
+  completedAt?: string;
+  endpointId: string;
+  method: string;
+  path: string;
+  ruleId?: string;
+  statusHttp?: number;
+  reqHeaders?: Record<string, string>;
+  reqQuery?: Record<string, string>;
+  reqBody?: unknown;
+  stateBefore?: Record<string, unknown>;
+  proposedState?: Record<string, unknown>;
+  committed?: boolean;
+  uncommittedReason?: string;
+  responseBody?: string;
 }
 
 export interface ValidationIssue {

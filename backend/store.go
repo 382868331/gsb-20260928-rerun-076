@@ -38,6 +38,7 @@ func NewStore(dir string) (*Store, error) {
 		}
 		normalizeScenario(&sc)
 		sc.resetRuntime()
+		s.loadRuntime(&sc)
 		s.scenarios[sc.ID] = &sc
 	}
 	return s, nil
@@ -81,6 +82,8 @@ func (sc *Scenario) resetRuntime() {
 	sc.State = cloneState(sc.InitialState)
 	sc.Counters = map[string]int{}
 	sc.History = nil
+	sc.Operations = []OperationRecord{}
+	sc.ActiveRoundID = ""
 }
 
 func (s *Store) save(sc *Scenario, persist bool) error {
@@ -117,6 +120,9 @@ func (s *Store) upsert(in Scenario) (*Scenario, error) {
 		rt.State = cloneState(rt.InitialState)
 		rt.Counters = map[string]int{}
 		rt.History = nil
+		rt.Operations = []OperationRecord{}
+		rt.ActiveRoundID = ""
+		_ = s.persistRuntime(&rt)
 		if err := s.persist(&rt); err != nil {
 			return nil, err
 		}
@@ -124,6 +130,7 @@ func (s *Store) upsert(in Scenario) (*Scenario, error) {
 	}
 	in.CreatedAt, in.UpdatedAt = now, now
 	in.resetRuntime()
+	_ = s.persistRuntime(&in)
 	if err := s.persist(&in); err != nil {
 		return nil, err
 	}
@@ -136,6 +143,9 @@ func (s *Store) persist(sc *Scenario) error {
 	clean.State = nil
 	clean.Counters = nil
 	clean.History = nil
+	clean.Operations = nil
+	clean.ActiveRoundID = ""
+	clean.ContentHash = ""
 	b, err := json.MarshalIndent(&clean, "", "  ")
 	if err != nil {
 		return err
@@ -147,6 +157,110 @@ func (s *Store) persist(sc *Scenario) error {
 	return os.Rename(tmp, filepath.Join(s.dir, sc.ID+".json"))
 }
 
+func (s *Store) runtimePath(id string) string {
+	return filepath.Join(s.dir, id+".runtime.json")
+}
+
+type persistedRuntime struct {
+	State         map[string]interface{} `json:"state"`
+	Counters      map[string]int         `json:"counters"`
+	History       []CallRecord           `json:"history"`
+	ActiveRoundID string                 `json:"activeRoundId"`
+	Operations    []OperationRecord      `json:"operations"`
+}
+
+// loadRuntime restores only request facts. A pending operation stays pending
+// after a process restart: that correctly means "result unknown" until the
+// user checks or explicitly starts an independent replacement round.
+func (s *Store) loadRuntime(sc *Scenario) {
+	b, err := os.ReadFile(s.runtimePath(sc.ID))
+	if err != nil {
+		return
+	}
+	var rt persistedRuntime
+	if err := json.Unmarshal(b, &rt); err != nil {
+		return
+	}
+	sc.State = cloneState(rt.State)
+	if len(sc.State) == 0 {
+		if len(rt.State) == 0 && sc.InitialState != nil && len(sc.InitialState) > 0 {
+			sc.State = cloneState(sc.InitialState)
+		}
+	}
+	sc.Counters = map[string]int{}
+	for k, v := range rt.Counters {
+		sc.Counters[k] = v
+	}
+	sc.History = rt.History
+	sc.ActiveRoundID = rt.ActiveRoundID
+	sc.Operations = rt.Operations
+	if sc.Operations == nil {
+		sc.Operations = []OperationRecord{}
+	}
+}
+
+func (s *Store) persistRuntime(sc *Scenario) error {
+	rt := persistedRuntime{
+		State:         cloneState(sc.State),
+		Counters:      map[string]int{},
+		History:       sc.History,
+		ActiveRoundID: sc.ActiveRoundID,
+		Operations:    sc.Operations,
+	}
+	for k, v := range sc.Counters {
+		rt.Counters[k] = v
+	}
+	b, err := json.MarshalIndent(rt, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(s.dir, sc.ID+".runtime.json.tmp")
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.runtimePath(sc.ID))
+}
+
+func (s *Store) beginRound(id, roundID string) (*Scenario, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sc, ok := s.scenarios[id]
+	if !ok {
+		return nil, false
+	}
+	sc.State = cloneState(sc.InitialState)
+	sc.Counters = map[string]int{}
+	sc.History = []CallRecord{}
+	sc.ActiveRoundID = roundID
+	sc.Operations = []OperationRecord{}
+	_ = s.persistRuntime(sc)
+	return sc, true
+}
+
+func (s *Store) putOperation(sc *Scenario, op OperationRecord) error {
+	replaced := false
+	for i := range sc.Operations {
+		if sc.Operations[i].RequestID == op.RequestID {
+			sc.Operations[i] = op
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		sc.Operations = append(sc.Operations, op)
+	}
+	return s.persistRuntime(sc)
+}
+
+func (s *Store) findOperation(sc *Scenario, requestID string) (OperationRecord, bool) {
+	for _, op := range sc.Operations {
+		if op.RequestID == requestID {
+			return op, true
+		}
+	}
+	return OperationRecord{}, false
+}
+
 func (s *Store) delete(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,6 +269,7 @@ func (s *Store) delete(id string) bool {
 	}
 	delete(s.scenarios, id)
 	_ = os.Remove(filepath.Join(s.dir, id+".json"))
+	_ = os.Remove(s.runtimePath(id))
 	return true
 }
 
@@ -166,6 +281,7 @@ func (s *Store) resetScenario(id string) (*Scenario, bool) {
 		return nil, false
 	}
 	sc.resetRuntime()
+	_ = s.persistRuntime(sc)
 	return sc, true
 }
 
@@ -180,6 +296,9 @@ func snapshot(sc *Scenario) Scenario {
 	}
 	if len(sc.History) > 0 {
 		cp.History = append([]CallRecord(nil), sc.History...)
+	}
+	if len(sc.Operations) > 0 {
+		cp.Operations = append([]OperationRecord(nil), sc.Operations...)
 	}
 	return cp
 }
