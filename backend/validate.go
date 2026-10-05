@@ -9,7 +9,9 @@ import (
 var validPathSeg = regexp.MustCompile(`^[A-Za-z0-9_.-]+|:[A-Za-z_][A-Za-z0-9_]*$`)
 
 func validateScenario(sc *Scenario) []ValidationIssue {
-	var issues []ValidationIssue
+	// Never nil: the frontend iterates this collection and a JSON null
+	// crashes its render (blank page after saving a valid scenario).
+	issues := make([]ValidationIssue, 0)
 	add := func(level, code, msg, ep, rule string) {
 		issues = append(issues, ValidationIssue{Level: level, Code: code, Message: msg, Endpoint: ep, Rule: rule})
 	}

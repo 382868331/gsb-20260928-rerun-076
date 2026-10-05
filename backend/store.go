@@ -178,8 +178,6 @@ func snapshot(sc *Scenario) Scenario {
 	for k, v := range sc.Counters {
 		cp.Counters[k] = v
 	}
-	if len(sc.History) > 0 {
-		cp.History = append([]CallRecord(nil), sc.History...)
-	}
+	cp.History = append([]CallRecord{}, sc.History...)
 	return cp
 }

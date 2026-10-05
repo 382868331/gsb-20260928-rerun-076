@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { CallRecord, Scenario } from "../types";
-import { SequencePanel, type SeqStep } from "./SequencePanel";
+import { SequencePanel, newSeqStep, type SeqStep } from "./SequencePanel";
 import { findStateRefs, substituteState } from "../sequence";
 
 interface Probe {
@@ -46,7 +46,7 @@ function stepFromRecord(c: CallRecord): SeqStep {
   const query = Object.entries(c.reqQuery ?? {})
     .map(([k, v]) => `${k}=${v}`)
     .join("&");
-  return {
+  return newSeqStep({
     id: `step-${Date.now().toString(36)}-${stepCounter}`,
     label: `来自历史 #${c.seq}`,
     method: c.method,
@@ -54,7 +54,7 @@ function stepFromRecord(c: CallRecord): SeqStep {
     query,
     headersText: JSON.stringify(c.reqHeaders ?? {}, null, 2),
     bodyText: c.reqBody !== undefined && c.reqBody !== null ? JSON.stringify(c.reqBody, null, 2) : "",
-  };
+  });
 }
 
 export function Runner({
@@ -156,7 +156,7 @@ export function Runner({
     stepCounter += 1;
     setSteps([
       ...steps,
-      {
+      newSeqStep({
         id: `step-${Date.now().toString(36)}-${stepCounter}`,
         label: ep.name,
         method: ep.method,
@@ -164,7 +164,7 @@ export function Runner({
         query,
         headersText,
         bodyText,
-      },
+      }),
     ]);
   };
   const addSelectedToSequence = () => {

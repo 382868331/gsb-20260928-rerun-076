@@ -49,11 +49,15 @@ export interface Endpoint {
 export interface CallRecord {
   seq: number;
   time: string;
+  runId?: string;
+  stepId?: string;
+  requestId?: string;
   endpointId: string;
   method: string;
   path: string;
   ruleId: string;
   status: number;
+  respBody?: string;
   failed?: Failure;
   cancelled?: boolean;
   delayMs: number;

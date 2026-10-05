@@ -74,6 +74,27 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 	for k := range r.Header {
 		headers[k] = r.Header.Get(k)
 	}
+	// Idempotent replay: if the client retries a request it never got a
+	// response for (page reload, network drop), the same X-Mock-Request-Id
+	// must not apply state or advance counters twice. We answer with the
+	// originally recorded response instead.
+	reqID := r.Header.Get("X-Mock-Request-Id")
+	if reqID != "" {
+		for _, h := range sc.History {
+			if h.RequestID == reqID && !h.Cancelled && h.Failed == nil {
+				s.store.unlock()
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.Header().Set("X-Mock-Duplicate", "1")
+				status := h.Status
+				if status == 0 {
+					status = 200
+				}
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, h.RespBody)
+				return
+			}
+		}
+	}
 	queries := map[string]string{}
 	for k := range r.URL.Query() {
 		queries[k] = r.URL.Query().Get(k)
@@ -164,6 +185,9 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 
 	record := CallRecord{
 		Time:       time.Now().UTC().Format(time.RFC3339),
+		RunID:      r.Header.Get("X-Mock-Run"),
+		StepID:     r.Header.Get("X-Mock-Step"),
+		RequestID:  reqID,
 		EndpointID: ep.ID,
 		Method:     r.Method,
 		Path:       r.URL.Path,
@@ -205,6 +229,7 @@ func (s *Server) serveMock(w http.ResponseWriter, r *http.Request, scenarioID st
 	// The call completes normally: commit extracted state and history.
 	s.store.lock()
 	sc.State = newState
+	record.RespBody = rendered
 	record.StateAfter = cloneState(newState)
 	record.Seq = len(sc.History) + 1
 	sc.History = append(sc.History, record)

@@ -73,11 +73,15 @@ type Scenario struct {
 type CallRecord struct {
 	Seq        int                    `json:"seq"`
 	Time       string                 `json:"time"`
+	RunID      string                 `json:"runId,omitempty"`     // client-supplied execution round id
+	StepID     string                 `json:"stepId,omitempty"`    // client-supplied step id inside the round
+	RequestID  string                 `json:"requestId,omitempty"` // idempotency key supplied by the client
 	EndpointID string                 `json:"endpointId"`
 	Method     string                 `json:"method"`
 	Path       string                 `json:"path"`
 	RuleID     string                 `json:"ruleId"` // "" means default response
 	Status     int                    `json:"status"` // 0 when transport failed
+	RespBody   string                 `json:"respBody,omitempty"` // rendered body, kept for idempotent replay
 	Failed     *Failure               `json:"failed,omitempty"`
 	Cancelled  bool                   `json:"cancelled,omitempty"` // client went away mid-delay; state not committed
 	DelayMS    int                    `json:"delayMs"`

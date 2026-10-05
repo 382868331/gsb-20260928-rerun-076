@@ -59,3 +59,32 @@ export function ensureCollections(sc: Scenario): Scenario {
     history: sc.history ?? [],
   };
 }
+
+// canonicalize sorts object keys recursively so two semantically equal
+// scenario definitions produce the same fingerprint regardless of the
+// key order the server happened to serialize.
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+      out[k] = canonicalize((value as Record<string, unknown>)[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
+// scenarioFingerprint identifies "this exact definition", used to confirm
+// whether a save with an uncertain outcome actually landed on the server.
+export function scenarioFingerprint(sc: Scenario): string {
+  const normalized = ensureCollections(sc);
+  return JSON.stringify(
+    canonicalize({
+      name: normalized.name,
+      description: normalized.description,
+      endpoints: normalized.endpoints,
+      initialState: normalized.initialState,
+    })
+  );
+}
